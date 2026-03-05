@@ -1,66 +1,152 @@
-import ollama
-import speech_recognition as sr
-import subprocess
-import re
 import os
+import shlex
+import subprocess
+import tempfile
+from pathlib import Path
 
-# Configuration
-MODEL = "llama3.2"  # Fast on Pi 5
-VOICE_MODEL = "en_US-lessac-medium.onnx"  # You need to download this file
+import ollama
 
-def speak_streaming(text_chunk):
-    # The -D flag tells aplay which device to use
-    command = f'echo "{text_chunk}" | piper --model {VOICE_MODEL} --output_raw | aplay -D bluealsa -r 22050 -f S16_LE'
-    subprocess.run(command, shell=True)
-    
-def listen_and_respond():
-    recognizer = sr.Recognizer()
-    
-    with sr.Microphone(device_index=1, sample_rate=16000) as source:
-        # Calibrate for your Bluetooth mic's background noise
-        print("\n--- Calibrating mic... ---")
-        recognizer.adjust_for_ambient_noise(source, duration=1)
-        print("[Ready! Speak into your earphones...]")
-        
+# ---------- Configuration ----------
+# Local LLM served by Ollama (local only)
+LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:3b")
+
+# Local STT via whisper.cpp CLI
+WHISPER_CPP_BIN = os.getenv("WHISPER_CPP_BIN", "whisper-cli")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "./models/ggml-base.en.bin")
+
+# Local TTS via Piper
+PIPER_BIN = os.getenv("PIPER_BIN", "piper")
+PIPER_MODEL = os.getenv("PIPER_MODEL", "./en_US-lessac-medium.onnx")
+
+# Audio capture/playback (PipeWire/PulseAudio routed to Bluetooth headset)
+MIC_SAMPLE_RATE = int(os.getenv("MIC_SAMPLE_RATE", "16000"))
+MAX_RECORD_SECONDS = int(os.getenv("MAX_RECORD_SECONDS", "8"))
+
+EXIT_WORDS = {"exit", "quit", "goodbye", "stop"}
+
+
+def run_cmd(command: str, check: bool = True) -> subprocess.CompletedProcess:
+    """Run a shell command and return completed process."""
+    return subprocess.run(
+        command,
+        shell=True,
+        check=check,
+        text=True,
+        capture_output=True,
+    )
+
+
+def record_user_audio(wav_path: Path) -> bool:
+    """Record mono 16kHz audio from default input device."""
+    cmd = (
+        f"timeout {MAX_RECORD_SECONDS}s "
+        f"pw-record --format=s16 --rate={MIC_SAMPLE_RATE} --channels=1 {shlex.quote(str(wav_path))}"
+    )
+    result = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+    return wav_path.exists() and wav_path.stat().st_size > 0 and result.returncode in (0, 124)
+
+
+def transcribe_with_whisper(audio_path: Path) -> str:
+    """Run local whisper.cpp and return transcript text."""
+    out_txt = audio_path.with_suffix("")
+    cmd = (
+        f"{shlex.quote(WHISPER_CPP_BIN)} "
+        f"-m {shlex.quote(WHISPER_MODEL)} "
+        f"-f {shlex.quote(str(audio_path))} "
+        f"-otxt -of {shlex.quote(str(out_txt))} -np"
+    )
+    result = run_cmd(cmd, check=False)
+    transcript_file = Path(f"{out_txt}.txt")
+
+    if result.returncode != 0 or not transcript_file.exists():
+        return ""
+
+    text = transcript_file.read_text(encoding="utf-8").strip()
+    transcript_file.unlink(missing_ok=True)
+    return text
+
+
+def speak_text(text: str) -> None:
+    """Synthesize local TTS with Piper and play to default output (Bluetooth sink)."""
+    clean = text.strip()
+    if not clean:
+        return
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        wav_path = Path(tmp.name)
+
+    try:
+        tts_cmd = (
+            f"echo {shlex.quote(clean)} | "
+            f"{shlex.quote(PIPER_BIN)} --model {shlex.quote(PIPER_MODEL)} "
+            f"--output_file {shlex.quote(str(wav_path))}"
+        )
+        run_cmd(tts_cmd)
+        run_cmd(f"pw-play {shlex.quote(str(wav_path))}")
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+
+def chat_once(user_text: str) -> str:
+    """Query local Ollama model and return response."""
+    response = ollama.chat(
+        model=LLM_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a concise, helpful Raspberry Pi voice assistant.",
+            },
+            {"role": "user", "content": user_text},
+        ],
+    )
+    return response["message"]["content"].strip()
+
+
+def check_prereqs() -> None:
+    if not Path(WHISPER_MODEL).exists():
+        raise FileNotFoundError(f"Whisper model not found: {WHISPER_MODEL}")
+    if not Path(PIPER_MODEL).exists():
+        raise FileNotFoundError(f"Piper model not found: {PIPER_MODEL}")
+
+
+def main() -> None:
+    check_prereqs()
+
+    print("=== Raspberry Pi 5 Local Voice Chatbot ===")
+    print(f"LLM Model: {LLM_MODEL}")
+    print("Speak after each [Listening...] prompt.")
+
+    while True:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            mic_wav = Path(tmp.name)
+
         try:
-            # Captures audio from your Bluetooth headset
-            audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
-            
-            # Transcription (Sends audio to Google for fast text conversion)
-            user_input = recognizer.recognize_google(audio)
-            print(f"You: {user_input}")
-            
-            # Streaming LLM Response
-            print("AI: ", end="", flush=True)
-            stream = ollama.chat(model=MODEL, messages=[{'role': 'user', 'content': user_input}], stream=True)
-            
-            sentence_buffer = ""
-            for chunk in stream:
-                content = chunk['message']['content']
-                print(content, end="", flush=True)
-                sentence_buffer += content
-                
-                # Check for end of a sentence to start speaking immediately
-                if any(p in content for p in ".!?"):
-                    sentences = re.split(r'(?<=[.!?]) +', sentence_buffer)
-                    if len(sentences) > 1:
-                        speak_streaming(sentences[0])
-                        sentence_buffer = sentences[1]
-            
-            # Speak anything remaining in the buffer
-            if sentence_buffer.strip():
-                speak_streaming(sentence_buffer)
+            print("\n[Listening...]")
+            if not record_user_audio(mic_wav):
+                print("[No audio captured. Check Bluetooth mic/input routing.]")
+                continue
 
-        except sr.UnknownValueError:
-            print("\n[System: Could not understand audio. Try speaking closer to the mic.]")
-        except Exception as e:
-            print(f"\n[System Error: {e}]")
+            user_text = transcribe_with_whisper(mic_wav)
+            if not user_text:
+                print("[STT failed or no speech detected.]")
+                continue
+
+            print(f"You: {user_text}")
+
+            if user_text.lower().strip() in EXIT_WORDS:
+                speak_text("Goodbye!")
+                break
+
+            ai_text = chat_once(user_text)
+            print(f"AI: {ai_text}")
+            speak_text(ai_text)
+
+        finally:
+            mic_wav.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
-    # Check if you have the Piper model file in the folder
-    if not os.path.exists(VOICE_MODEL):
-        print(f"Error: {VOICE_MODEL} not found.")
-        print("Download it: wget https://github.com/rhasspy/piper/releases/download/v1.0.0/en_US-lessac-medium.onnx")
-    else:
-        while True:
-            listen_and_respond()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nStopped by user.")
