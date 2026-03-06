@@ -26,12 +26,14 @@ sudo apt install -y python3-pip pipewire pipewire-audio-client-libraries pulseau
 pip install ollama
 ```
 
-## 3) Install Ollama (local LLM)
+## 3) Install Ollama (local LLM on Pi CPU/GPU)
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull llama3.2:3b
 ```
+
+> Important: this gives you a local LLM, but **not Hailo offload**. Ollama currently runs this model on the Pi CPU/GPU stack. If your goal is specifically to use the Hailo-10H accelerator for inference, use a Hailo-supported runtime/model path (for example, HailoRT + a compatible model/app) instead of expecting `ollama pull` to target the Hailo device.
 
 ## 4) Install Whisper.cpp (local STT)
 
@@ -113,6 +115,10 @@ python3 chat.py
 
 ## Troubleshooting
 
+- `curl -fsSL https://ollama.com/install.sh | sh` + `ollama pull llama3.2:3b` works for local inference, but does **not** mean the model is running on Hailo-10H.
+- Verify your Hailo stack separately with `hailortcli scan`.
+- If `hailortcli scan` fails, fix HailoRT/driver/device setup first; the chatbot will continue in CPU-only mode.
+- If `hailortcli scan` passes, this project still uses Ollama for LLM calls unless you replace that path with a Hailo-compatible LLM runtime.
 - If you hear output but STT fails, headset may be on A2DP-only profile (no mic). Switch to HFP/HSP profile.
 - If STT is slow, use `ggml-tiny.en.bin` for faster transcription.
 - If TTS is slow, use a smaller Piper model or shorter responses.
