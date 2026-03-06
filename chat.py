@@ -9,6 +9,8 @@ import ollama
 # ---------- Configuration ----------
 # Local LLM served by Ollama (local only)
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:3b")
+AI_HAT_PROFILE = os.getenv("AI_HAT_PROFILE", "generic").strip().lower()
+HALO10_LLM_CMD = os.getenv("HALO10_LLM_CMD", "").strip()
 
 # Local STT via whisper.cpp CLI
 WHISPER_CPP_BIN = os.getenv("WHISPER_CPP_BIN", "whisper-cli")
@@ -88,7 +90,19 @@ def speak_text(text: str) -> None:
 
 
 def chat_once(user_text: str) -> str:
-    """Query local Ollama model and return response."""
+    """Query a local LLM and return response text."""
+    if HALO10_LLM_CMD:
+        cmd = HALO10_LLM_CMD.format(prompt=shlex.quote(user_text))
+        result = run_cmd(cmd, check=False)
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or "Unknown HALO10 command error"
+            return f"I couldn't query the HALO10 runtime. {stderr}"
+
+        text = result.stdout.strip()
+        if text:
+            return text
+        return "I could not get a response from the HALO10 runtime."
+
     response = ollama.chat(
         model=LLM_MODEL,
         messages=[
@@ -113,7 +127,12 @@ def main() -> None:
     check_prereqs()
 
     print("=== Raspberry Pi 5 Local Voice Chatbot ===")
-    print(f"LLM Model: {LLM_MODEL}")
+    if HALO10_LLM_CMD:
+        print("LLM Backend: HALO10 external runtime command")
+    else:
+        print(f"LLM Model: {LLM_MODEL}")
+    if AI_HAT_PROFILE in {"halo10", "hailo10"}:
+        print("AI HAT profile: HALO10 (AI HAT 2.0 compatible mode enabled)")
     print("Speak after each [Listening...] prompt.")
 
     while True:

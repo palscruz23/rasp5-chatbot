@@ -8,10 +8,11 @@ This project gives you a **fully local voice pipeline**:
 4. Local text-to-speech (Piper)
 5. Playback to Bluetooth headphones
 
-> Notes on HALO HAT 2.0:
+> Notes on HALO HAT 2.0 / HALO10:
 > - The script is local-first and runs entirely on your Pi.
-> - Actual accelerator offload depends on the model/runtime support you install on the HAT stack.
-> - Ollama works locally on Pi CPU/GPU stack; if your HALO runtime exposes compatible LLM acceleration, use that model/runtime in place of default.
+> - Default mode uses Ollama locally on Pi CPU/GPU stack.
+> - For HALO10 runtimes exposed by AI HAT 2.0, set `AI_HAT_PROFILE=halo10` and provide `HALO10_LLM_CMD` to call your local HALO10 inference command.
+> - `HALO10_LLM_CMD` should print the assistant response to stdout and can include `{prompt}` placeholder for the recognized text.
 
 ## 1) System packages
 
@@ -88,6 +89,8 @@ export WHISPER_MODEL="./models/ggml-base.en.bin"
 export PIPER_BIN="piper"
 export PIPER_MODEL="./en_US-lessac-medium.onnx"
 export MAX_RECORD_SECONDS=8
+export AI_HAT_PROFILE="halo10"
+export HALO10_LLM_CMD="/opt/halo10/bin/llm_infer --prompt {prompt}"
 ```
 
 Then run again:
