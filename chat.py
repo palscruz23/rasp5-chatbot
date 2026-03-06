@@ -22,6 +22,10 @@ PIPER_MODEL = os.getenv("PIPER_MODEL", "./en_US-lessac-medium.onnx")
 MIC_SAMPLE_RATE = int(os.getenv("MIC_SAMPLE_RATE", "16000"))
 MAX_RECORD_SECONDS = int(os.getenv("MAX_RECORD_SECONDS", "8"))
 
+# Optional Hailo AI HAT 2.0 compatibility checks
+HAILO_CHECK = os.getenv("HAILO_CHECK", "1") not in {"0", "false", "False"}
+HAILO_RT_BIN = os.getenv("HAILO_RT_BIN", "hailortcli")
+
 EXIT_WORDS = {"exit", "quit", "goodbye", "stop"}
 
 
@@ -109,8 +113,28 @@ def check_prereqs() -> None:
         raise FileNotFoundError(f"Piper model not found: {PIPER_MODEL}")
 
 
+def check_hailo_runtime() -> None:
+    """Best-effort check for an installed Hailo runtime/device."""
+    if not HAILO_CHECK:
+        return
+
+    probe_cmd = f"{shlex.quote(HAILO_RT_BIN)} scan"
+    result = subprocess.run(probe_cmd, shell=True, text=True, capture_output=True)
+
+    if result.returncode == 0:
+        print("[Hailo runtime detected. AI HAT compatibility check passed.]")
+        return
+
+    print("[Hailo runtime not detected. Continuing in CPU-only local mode.]")
+    print(
+        "[Tip] Install HailoRT and ensure 'hailortcli scan' succeeds on your Pi 5 + "
+        "Hailo-10H AI HAT 2.0 setup if accelerator offload is required."
+    )
+
+
 def main() -> None:
     check_prereqs()
+    check_hailo_runtime()
 
     print("=== Raspberry Pi 5 Local Voice Chatbot ===")
     print(f"LLM Model: {LLM_MODEL}")
