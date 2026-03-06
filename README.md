@@ -1,4 +1,4 @@
-# Raspberry Pi 5 + HALO HAT 2.0 Local Voice Chatbot
+# Raspberry Pi 5 + Hailo-10H AI HAT 2.0 Local Voice Chatbot
 
 This project gives you a **fully local voice pipeline**:
 
@@ -8,7 +8,7 @@ This project gives you a **fully local voice pipeline**:
 4. Local text-to-speech (Piper)
 5. Playback to Bluetooth headphones
 
-> Notes on HALO HAT 2.0:
+> Notes on Hailo-10H AI HAT 2.0:
 > - The script is local-first and runs entirely on your Pi.
 > - Actual accelerator offload depends on the model/runtime support you install on the HAT stack.
 > - Ollama works locally on Pi CPU/GPU stack; if your HALO runtime exposes compatible LLM acceleration, use that model/runtime in place of default.
@@ -77,6 +77,21 @@ pactl set-default-sink <your_bt_headphone_sink>
 
 ```bash
 python3 chat.py
+```
+
+
+## Hailo-10H compatibility behavior
+
+`chat.py` now performs a startup compatibility probe for Hailo runtime using `hailortcli scan`.
+
+- If detected, startup prints a positive compatibility message.
+- If not detected, the assistant continues in local CPU-only mode instead of failing.
+
+You can configure this behavior:
+
+```bash
+export HAILO_CHECK=1              # default; set to 0 to skip probe
+export HAILO_RT_BIN="hailortcli" # override if binary path/name differs
 ```
 
 ## Optional environment variables
